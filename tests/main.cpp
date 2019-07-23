@@ -2,6 +2,8 @@
 #include "catch2/catch.hh"
 
 #include <tlab/tlab.hpp>
+#include <tlab/mp.hpp>
+
 
 unsigned int factorial( unsigned int number ) {
     return number <= 1 ? number : factorial(number-1)*number;

@@ -3,7 +3,9 @@
 #include <iostream>
 #include <tlab/mp.hpp>
 
-struct context{};
+struct context{
+    std::string tag;
+};
 
 template<char C>
 struct char2type{};
@@ -53,6 +55,13 @@ struct attr_wrap{
     }
 };
 
+struct tag {
+    template < typename Stream , typename Context >
+    static void write(Stream&& s, Context&& c){
+        s << c.tag;
+    }
+};
+
 TEST_CASE("Log" , "Concept"){
     basic_format<char2type<'['> , char2type<'t'> , char2type<'t'> , char2type<']'>> f;
     std::stringstream ss;
@@ -80,6 +89,17 @@ TEST_CASE("Log" , "Concept"){
             char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >> f4;
     ss.clear();
     f4.write(ss,nullptr);
+    std::cout<<ss.str()<<std::endl;
+
+    context c{ "tag" };
+
+    basic_format< 
+        attr_wrap<
+            chars<'['>,
+            chars<']'>, 
+            char2type<'1'>, tag , chars<'3','4','5'> >> f5;
+    ss.clear();
+    f5.write(ss,c);
     std::cout<<ss.str()<<std::endl;
 }
 

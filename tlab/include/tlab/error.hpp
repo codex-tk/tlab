@@ -37,7 +37,6 @@ std::error_condition make_error_condition(tlab::errc ec);
 
 namespace std {
     template <> struct is_error_condition_enum<tlab::errc> : true_type {};
-    //template <> struct is_error_code_enum<tlab::errc> : true_type {};
 } // namespace std
 
 #endif

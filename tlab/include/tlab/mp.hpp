@@ -17,6 +17,7 @@
 namespace tlab{
 namespace internal{
 
+    // https://en.cppreference.com/w/cpp/utility/integer_sequence
     template < std::size_t ... S > struct index_sequence {};
 
     template < std::size_t N , std::size_t ... S> struct make_index_sequence
@@ -47,7 +48,10 @@ namespace internal{
     };
 }
 
-template < typename ... Ts > struct type_list{};
+template < typename ... Ts > struct type_list{
+    template < template <typename ...> class T > 
+    struct rebind { using type = T< Ts...>;};
+};
 
 
 template < typename T , typename ... Us > struct push_back;

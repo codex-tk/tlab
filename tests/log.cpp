@@ -2,8 +2,8 @@
 #include <sstream>
 #include <iostream>
 #include <tlab/mp.hpp>
-#include <tlab/log.hpp>
 
+namespace tlab::log{ 
 struct context{
     std::string tag;
 };
@@ -66,10 +66,42 @@ struct tag {
     }
 };
 
+}
+
+using namespace tlab::log;
+
+TEST_CASE("Log" , "Concept"){
+    std::stringstream ss;
+
+    static_formatter<char2type<'['> , char2type<'t'> , char2type<'t'> , char2type<']'>>::format(ss,nullptr);
+    REQUIRE(ss.str() == "[tt]");
+    ss.str("");
+
+    static_formatter<chars<'[','t','t',']'>>::format(ss,nullptr);
+    REQUIRE(ss.str() == "[tt]");
+    ss.str("");
+
+    static_formatter< square_bracket_wrap<
+            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
+    REQUIRE(ss.str() == "[1][2][345]");
+    ss.str("");
+
+    static_formatter< wrap_each< chars<'[','{'> , chars<'}',']'> , 
+            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
+    REQUIRE(ss.str() == "[{1}][{2}][{345}]");
+    ss.str("");
+
+    static_formatter< square_bracket_wrap<
+            char2type<'1'>, tag , chars<'3','4','5'> >>::format(ss,context{"tag"});
+    REQUIRE(ss.str() == "[1][tag][345]");
+    ss.str("");
+}
+
 
 #include <tlab/mp.hpp>
 #include <cstdarg>
 #include <mutex>
+
 
 namespace tlab{
 namespace log{
@@ -88,6 +120,105 @@ struct basic_context{
     const char *tag;
     const char *msg;
 };
+
+template < typename T > class manager;
+
+template <typename ... Ts>
+class manager<tlab::type_list<Ts...>>{
+public:
+    static manager& instance(void){
+        static manager m;
+        return m;
+    }
+
+    template <std::size_t I , typename T = typename tlab::at<I,tlab::type_list<Ts...>>::type >
+    void set_service(T&& t){
+        std::get<I>(services_) = std::move(t);
+    }
+
+    void log(){
+        send(
+            context{"tag"}
+            ,tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
+    }
+
+    template <typename T, std::size_t ... S >
+    void send(T&& t, tlab::internal::index_sequence<S...>&&){
+        ((std::get<S>(services_).log(t)),...);
+    }
+
+private:
+    std::tuple<Ts...> services_;
+private:
+    manager(void){}
+    ~manager(void){}
+};
+
+struct cout_output {
+    template < typename Buf , typename C >
+    void write(const Buf& b , const C& ){
+        std::cout << b;
+    }
+};
+
+template <typename F,typename T> class service;
+
+template <typename F,typename ... Ts> class service<F,tlab::type_list<Ts...>>{
+public:
+    service(void){}
+
+    service(Ts&&... args)
+        : outputs_(std::forward<Ts>(args)...) {}
+
+    service& operator=(service&& rhs){
+        outputs_ = std::move(rhs.outputs_);
+        return *this;
+    }
+
+    template <typename T>
+    void log(const T& t){
+        std::ostringstream oss;
+        F::format(oss,t);
+        send(oss.str(),tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
+    }
+
+    template <typename T, std::size_t ... S >
+    void send(T&& t, tlab::internal::index_sequence<S...>&&){
+        ((std::get<S>(outputs_).write(t,t)),...);
+    }
+private:
+    std::tuple<Ts...> outputs_;
+};
+
+}}
+
+TEST_CASE("log" , "simple"){
+    using service_type = tlab::log::service<
+        tlab::log:: static_formatter<tlab::log::square_bracket_wrap<tag>>
+        ,tlab::type_list<tlab::log::cout_output>>;
+    service_type svc{};
+    tlab::log::manager<tlab::type_list<service_type>>::instance().set_service<0>(svc);
+    tlab::log::manager<tlab::type_list<service_type>>::instance().log();
+}
+/*
+namespace tlab{
+namespace log{
+
+enum class level{ trace , debug , info ,  warn , error , fatal };
+
+struct pp_info{
+    const char *file;
+    const char *function;
+    int line;
+};
+
+struct basic_context{
+    level level;
+    pp_info pp_info;
+    const char *tag;
+    const char *msg;
+};
+
 
 struct single_thread_model{
     struct null_lock{};
@@ -187,7 +318,7 @@ private:
 
 class cout_output{
 public:
-    template < typename S > void log(S&& s){ ::cout << s; }
+    template < typename S > void log(S&& s){ std::cout << s; }
 };
 
 } // namespace log
@@ -207,32 +338,6 @@ do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, ##__VA_ARGS__ );} while(0)
 #endif
 #endif
 
-TEST_CASE("Log" , "Concept"){
-    std::stringstream ss;
-
-    static_formatter<char2type<'['> , char2type<'t'> , char2type<'t'> , char2type<']'>>::format(ss,nullptr);
-    REQUIRE(ss.str() == "[tt]");
-    ss.str("");
-
-    static_formatter<chars<'[','t','t',']'>>::format(ss,nullptr);
-    REQUIRE(ss.str() == "[tt]");
-    ss.str("");
-
-    static_formatter< square_bracket_wrap<
-            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
-    REQUIRE(ss.str() == "[1][2][345]");
-    ss.str("");
-
-    static_formatter< wrap_each< chars<'[','{'> , chars<'}',']'> , 
-            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
-    REQUIRE(ss.str() == "[{1}][{2}][{345}]");
-    ss.str("");
-
-    static_formatter< square_bracket_wrap<
-            char2type<'1'>, tag , chars<'3','4','5'> >>::format(ss,context{"tag"});
-    REQUIRE(ss.str() == "[1][tag][345]");
-    ss.str("");
-}
 
 TEST_CASE("log" , "simple"){
 
@@ -243,4 +348,5 @@ TEST_CASE("log" , "simple"){
     //logger.service<0>() = test_service{};
 
     TLOG(logger,tlab::log::level::debug,"tag","%s msg" , "test");
-}
+     
+}*/

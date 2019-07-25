@@ -53,14 +53,10 @@ struct multi_thread_model{
     template <typename T>
     using lock_guard = std::lock_guard<T>;
 };
-
-template < typename ... Services >
-struct services {};
-
-template <typename S , typename T = multi_thread_model > class logger;
+template <typename S , typename T = multi_thread_model > class basic_logger;
 
 template <typename ThreadingModel , typename ... Services>
-class logger<services<Services...>,ThreadingModel> {
+class basic_logger<tlab::type_list<Services...>,ThreadingModel> {
 public:
     using sequence_type = typename tlab::internal::make_index_sequence<sizeof...(Services)>::type;
     using lock_type = typename ThreadingModel::lock_type;
@@ -90,7 +86,7 @@ private:
 };
 
 template <typename ThreadingModel , typename ... Services>
-void logger<services<Services...>,ThreadingModel>::log(
+void basic_logger<tlab::type_list<Services...>,ThreadingModel>::log(
     level lv, 
     log::pp_info&& pp_info, 
     const char* tag, 
@@ -101,10 +97,25 @@ void logger<services<Services...>,ThreadingModel>::log(
     va_start(args, msg);
     vsnprintf(buff,4096,msg,args);
     va_end(args);
-    logger::lock_guard guard(lock_);
+    basic_logger::lock_guard guard(lock_);
     dispatch<sequence_type>::invoke(services_, 
         basic_context{ lv , std::forward<log::pp_info>(pp_info), tag , buff});
 }
+
+template < typename ... Services >
+using logger = basic_logger< tlab::type_list< Services...>>;
+
+template < typename Formatter , typename Ostream >
+class basic_service;
+
+template < typename Formatter , typename ... Ostreams >
+class basic_service<Formatter, tlab::type_list<Ostreams...>> {
+public:
+    basic_service(void){}
+    ~basic_service(void){}
+private:
+    std::tuple<Ostreams...> ostreams_;
+};
 
 } // namespace log
 } // namespace tlab

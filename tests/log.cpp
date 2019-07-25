@@ -67,46 +67,34 @@ struct tag {
 };
 
 TEST_CASE("Log" , "Concept"){
-    static_formatter<char2type<'['> , char2type<'t'> , char2type<'t'> , char2type<']'>> f;
     std::stringstream ss;
-    f.format(ss,nullptr);
+
+    static_formatter<char2type<'['> , char2type<'t'> , char2type<'t'> , char2type<']'>>::format(ss,nullptr);
     REQUIRE(ss.str() == "[tt]");
     ss.str("");
 
-    static_formatter<chars<'[','t','t',']'>> f2;
-    f2.format(ss,nullptr);
+    static_formatter<chars<'[','t','t',']'>>::format(ss,nullptr);
     REQUIRE(ss.str() == "[tt]");
     ss.str("");
 
-    static_formatter< 
-        square_bracket_wrap<
-            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >> f3;
-    
-    f3.format(ss,nullptr);
+    static_formatter< square_bracket_wrap<
+            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
     REQUIRE(ss.str() == "[1][2][345]");
     ss.str("");
 
-    static_formatter< 
-        wrap_each< chars<'[','{'> , chars<'}',']'> , 
-            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >> f4;
-
-    f4.format(ss,nullptr);
+    static_formatter< wrap_each< chars<'[','{'> , chars<'}',']'> , 
+            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
     REQUIRE(ss.str() == "[{1}][{2}][{345}]");
     ss.str("");
 
-    context c{ "tag" };
-
-    static_formatter< 
-        square_bracket_wrap<
-            char2type<'1'>, tag , chars<'3','4','5'> >> f5;
-    
-    f5.format(ss,c);
+    static_formatter< square_bracket_wrap<
+            char2type<'1'>, tag , chars<'3','4','5'> >>::format(ss,context{"tag"});
     REQUIRE(ss.str() == "[1][tag][345]");
     ss.str("");
 }
 
 TEST_CASE("log" , "simple"){
-    tlab::log::logger<tlab::log::services< int , double , std::string >> logger;
+    tlab::log::logger< int , double , std::string > logger;
 
     logger.service<0>() = 10;
     logger.service<1>() = 1.0;

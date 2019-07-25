@@ -66,6 +66,147 @@ struct tag {
     }
 };
 
+
+#include <tlab/mp.hpp>
+#include <cstdarg>
+#include <mutex>
+
+namespace tlab{
+namespace log{
+
+enum class level{ trace , debug , info ,  warn , error , fatal };
+
+struct pp_info{
+    const char *file;
+    const char *function;
+    int line;
+};
+
+struct basic_context{
+    level level;
+    pp_info pp_info;
+    const char *tag;
+    const char *msg;
+};
+
+struct single_thread_model{
+    struct null_lock{};
+    template < typename T > struct null_lock_guard{
+        null_lock_guard(T&){}
+    };
+
+    using lock_type = null_lock;
+    template <typename T> 
+    using lock_guard = null_lock_guard<T>;
+};
+
+struct multi_thread_model{
+    using lock_type = std::mutex;
+    template <typename T>
+    using lock_guard = std::lock_guard<T>;
+};
+
+template <typename S , typename T = single_thread_model > class basic_logger;
+
+template <typename ThreadingModel , typename ... Services>
+class basic_logger<tlab::type_list<Services...>,ThreadingModel> {
+public:
+    using sequence_type = typename tlab::internal::make_index_sequence<sizeof...(Services)>::type;
+    using lock_type = typename ThreadingModel::lock_type;
+    using lock_guard = typename ThreadingModel::template lock_guard<lock_type>;
+
+    void log(level lv , pp_info&& pp_info, const char* tag, const char* msg, ...){
+        char buff[4096] = {0,};
+        va_list args;
+        va_start(args, msg);
+        vsnprintf(buff,4096,msg,args);
+        va_end(args);
+        basic_logger::lock_guard guard(lock_);
+        dispatch<sequence_type>::invoke(services_, 
+            basic_context{ lv , std::forward<log::pp_info>(pp_info), tag , buff});
+    }
+
+    template < typename T > struct dispatch;
+    
+    template < std::size_t ... S >
+    struct dispatch<tlab::internal::index_sequence<S...>> {
+        template < typename C >
+        static void invoke(std::tuple<Services...>& tuple , C&& c){
+            std::cout << c.pp_info.file << std::endl;
+            ((std::get<S>(tuple).log(c)),...);
+        }
+    };
+
+    template < std::size_t I> 
+    typename tlab::at<I,tlab::type_list<Services...>>::type& service(void) {
+        return std::get<I>(services_);
+    } 
+private:
+    lock_type lock_;
+    std::tuple<Services...> services_;
+};
+
+template < typename ... Services >
+using logger = basic_logger< tlab::type_list< Services...>>;
+
+template < typename StaticFormatter , typename Output >
+class basic_service;
+
+template < typename StaticFormatter , typename ... Outputs >
+class basic_service<StaticFormatter, tlab::type_list<Outputs...>> {
+public:
+    using sequence_type = typename tlab::internal::make_index_sequence<sizeof...(Outputs)>::type;
+    basic_service(void){}
+    ~basic_service(void){}
+
+    template < typename T > struct dispatch;
+    
+    template < std::size_t ... S >
+    struct dispatch<tlab::internal::index_sequence<S...>> {
+        template < typename T >
+        static void invoke(std::tuple<Outputs...>& tuple , T&& t){
+            ((std::get<S>(tuple).log(t)),...);
+        }
+    };
+
+    template < std::size_t I> 
+    typename tlab::at<I,tlab::type_list<Outputs...>>::type& output(void) {
+        return std::get<I>(outputs_);
+    }
+
+    template < typename C >
+    void log(const C& ){
+        std::stringstream ss;
+        //formatter_.format(ss,c);
+        dispatch<sequence_type>::invoke(outputs_,ss.str());
+    }
+private:
+    StaticFormatter formatter_;
+    std::tuple<Outputs...> outputs_;
+};
+
+class cout_output{
+public:
+    template < typename S > void log(S&& s){ ::cout << s; }
+};
+
+} // namespace log
+} // namespace tlab
+
+#ifndef TLOG_PP_INFO
+#define TLOG_PP_INFO tlab::log::pp_info{ __FILE__, __FUNCTION__, __LINE__ }
+#endif
+
+#ifndef TLOG
+#if defined(_WIN32) || defined(__WIN32__)
+#define TLOG(_logger,_lv,_tag,_msg,...)\
+do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, __VA_ARGS__ );} while(0)
+#else
+#define TLOG(_logger,_lv,_tag,_msg,...)\
+do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, ##__VA_ARGS__ );} while(0)
+#endif
+#endif
+
 TEST_CASE("Log" , "Concept"){
     std::stringstream ss;
 
@@ -94,11 +235,12 @@ TEST_CASE("Log" , "Concept"){
 }
 
 TEST_CASE("log" , "simple"){
-    tlab::log::logger< int , double , std::string > logger;
 
-    logger.service<0>() = 10;
-    logger.service<1>() = 1.0;
-    logger.service<2>() = "String";
+    using test_service = tlab::log::basic_service< int , tlab::type_list< tlab::log::cout_output > >;
+
+    tlab::log::logger< test_service > logger;
+
+    //logger.service<0>() = test_service{};
 
     TLOG(logger,tlab::log::level::debug,"tag","%s msg" , "test");
 }

@@ -13,17 +13,17 @@ namespace tlab{
         using pointer_type = return_type (class_type::*)(Ts...);
           
         member_fn_ptr(pointer_type ptr)
-            : _ptr(ptr){}
+            : ptr_(ptr){}
         
         return_type operator()(C* c, Ts&& ... args){
-            return (c->*_ptr)(std::forward<Ts>(args)...);
+            return (c->*ptr_)(std::forward<Ts>(args)...);
         }
 
         return_type operator()(C& c, Ts&& ... args){
-            return (c.*_ptr)(std::forward<Ts>(args)...);
+            return (c.*ptr_)(std::forward<Ts>(args)...);
         }
     private:
-        pointer_type _ptr;
+        pointer_type ptr_;
     };
 
 }

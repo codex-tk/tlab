@@ -11,25 +11,25 @@ namespace tlab{
         using pointer_type = element_type class_type::*;
           
         member_ptr(pointer_type ptr)
-            : _ptr(ptr){}
+            : ptr_(ptr){}
         
         element_type get(class_type& c){
-            return (c.*_ptr);
+            return (c.*ptr_);
         }
         
         void set(class_type& c, element_type&& v){
-            (c.*_ptr) = std::forward<element_type>(v);
+            (c.*ptr_) = std::forward<element_type>(v);
         }
 
         element_type get(class_type* c){
-            return (c->*_ptr);
+            return (c->*ptr_);
         }
 
         void set(class_type* c, element_type&& v){
-            (c->*_ptr) = std::forward<element_type>(v);
+            (c->*ptr_) = std::forward<element_type>(v);
         }
     private:
-        pointer_type _ptr;
+        pointer_type ptr_;
     };
 
 }

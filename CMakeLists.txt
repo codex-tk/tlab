@@ -44,15 +44,15 @@ if ( ZLIB_FOUND )
   add_definitions( -DENABLE_LIB_Z )
 endif( ZLIB_FOUND )
 
-find_package(Boost 1.60.0 COMPONENTS filesystem)
+find_package(Boost 1.60.0 COMPONENTS filesystem log)
 if(Boost_FOUND)
 	message(STATUS  ${Boost_INCLUDE_DIRS} )	
-    set(Boost_USE_STATIC_LIBS        ON) # only find static libs
-    set(Boost_USE_MULTITHREADED      ON)
-    set(Boost_USE_STATIC_RUNTIME    OFF)
-    include_directories(${Boost_INCLUDE_DIRS})
-    #target_link_libraries( test ${Boost_LIBRARIES})
-    add_definitions( -DENABLE_LIB_BOOST )
+  set(Boost_USE_STATIC_LIBS        ON) # only find static libs
+  set(Boost_USE_MULTITHREADED      ON)
+  set(Boost_USE_STATIC_RUNTIME    OFF)
+  include_directories(${Boost_INCLUDE_DIRS})
+  #target_link_libraries( test ${Boost_LIBRARIES})
+  add_definitions( -DENABLE_LIB_BOOST )
 endif()
 
 add_subdirectory(tlab)

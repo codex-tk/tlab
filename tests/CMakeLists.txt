@@ -12,6 +12,8 @@ if (ZLIB_FOUND)
 endif(ZLIB_FOUND)
 
 if(Boost_FOUND)
+    add_definitions(-DBOOST_LOG_DYN_LINK)
+    MESSAGE(${Boost_LIBRARIES})
     target_link_libraries(tlab.test ${Boost_LIBRARIES})
 endif()
 

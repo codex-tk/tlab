@@ -2,6 +2,7 @@
 #include <sstream>
 #include <iostream>
 #include <tlab/mp.hpp>
+#include <tlab/log.hpp>
 
 struct context{
     std::string tag;
@@ -38,15 +39,15 @@ struct dispatch<tlab::type_list< char2type<Cs> ... >>{
 };
 
 template < typename ... Ts >
-struct basic_format{
+struct static_formatter{
     template < typename Stream , typename Context >
-    static void write(Stream&& s, Context&& c){
+    static void format(Stream&& s, Context&& c){
         (dispatch<Ts>::invoke(s,c) , ...);
     }
 };
 
 template < typename Prefix , typename Surfix, typename ... Ts >
-struct attr_wrap{
+struct wrap_each{
     template < typename Stream , typename Context >
     static void write(Stream&& s, Context&& c){
         ((  dispatch<Prefix>::invoke(s,c),
@@ -54,6 +55,9 @@ struct attr_wrap{
             dispatch<Surfix>::invoke(s,c)), ...);
     }
 };
+
+template <typename ... Ts >
+using square_bracket_wrap = wrap_each< char2type<'['>, char2type<']'>, Ts... >;
 
 struct tag {
     template < typename Stream , typename Context >
@@ -63,43 +67,50 @@ struct tag {
 };
 
 TEST_CASE("Log" , "Concept"){
-    basic_format<char2type<'['> , char2type<'t'> , char2type<'t'> , char2type<']'>> f;
+    static_formatter<char2type<'['> , char2type<'t'> , char2type<'t'> , char2type<']'>> f;
     std::stringstream ss;
-    f.write(ss,nullptr);
-    std::cout<<ss.str()<<std::endl;
+    f.format(ss,nullptr);
+    REQUIRE(ss.str() == "[tt]");
+    ss.str("");
 
-    basic_format<chars<'[','t','t',']'>> f2;
-    ss.clear();
-    f2.write(ss,nullptr);
-    std::cout<<ss.str()<<std::endl;
+    static_formatter<chars<'[','t','t',']'>> f2;
+    f2.format(ss,nullptr);
+    REQUIRE(ss.str() == "[tt]");
+    ss.str("");
 
-    basic_format< 
-        attr_wrap<
-            char2type<'['>,
-            char2type<']'>, 
+    static_formatter< 
+        square_bracket_wrap<
             char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >> f3;
-    ss.clear();
-    f3.write(ss,nullptr);
-    std::cout<<ss.str()<<std::endl;
+    
+    f3.format(ss,nullptr);
+    REQUIRE(ss.str() == "[1][2][345]");
+    ss.str("");
 
-    basic_format< 
-        attr_wrap<
-            chars<'[', '{'>,
-            chars<'}', ']'>, 
+    static_formatter< 
+        wrap_each< chars<'[','{'> , chars<'}',']'> , 
             char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >> f4;
-    ss.clear();
-    f4.write(ss,nullptr);
-    std::cout<<ss.str()<<std::endl;
+
+    f4.format(ss,nullptr);
+    REQUIRE(ss.str() == "[{1}][{2}][{345}]");
+    ss.str("");
 
     context c{ "tag" };
 
-    basic_format< 
-        attr_wrap<
-            chars<'['>,
-            chars<']'>, 
+    static_formatter< 
+        square_bracket_wrap<
             char2type<'1'>, tag , chars<'3','4','5'> >> f5;
-    ss.clear();
-    f5.write(ss,c);
-    std::cout<<ss.str()<<std::endl;
+    
+    f5.format(ss,c);
+    REQUIRE(ss.str() == "[1][tag][345]");
+    ss.str("");
 }
 
+TEST_CASE("log" , "simple"){
+    tlab::log::logger<tlab::log::services< int , double , std::string >> logger;
+
+    logger.service<0>() = 10;
+    logger.service<1>() = 1.0;
+    logger.service<2>() = "String";
+
+    TLOG(logger,tlab::log::level::debug,"tag","%s msg" , "test");
+}

@@ -66,6 +66,20 @@ struct tag {
     }
 };
 
+struct endl {
+    template < typename Stream , typename Context >
+    static void write(Stream&& s, Context&& ){
+        s << "\n";
+    }
+};
+
+struct message{
+    template < typename Stream , typename Context >
+    static void write(Stream&& s, Context&& c){
+        s << c.msg;
+    }
+};
+
 }
 
 using namespace tlab::log;
@@ -136,10 +150,15 @@ public:
         std::get<I>(services_) = std::move(t);
     }
 
-    void log(){
-        send(
-            context{"tag"}
-            ,tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
+    void log(level lv , pp_info&& pp_info, const char* tag, const char* msg, ...){
+        char buff[4096] = {0,};
+        va_list args;
+        va_start(args, msg);
+        vsnprintf(buff,4096,msg,args);
+        va_end(args);
+        send( 
+            basic_context{ lv , std::forward<log::pp_info>(pp_info), tag , buff} ,
+            tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
     }
 
     template <typename T, std::size_t ... S >
@@ -161,9 +180,9 @@ struct cout_output {
     }
 };
 
-template <typename F,typename T> class service;
+template <typename F,typename B,typename T> class service;
 
-template <typename F,typename ... Ts> class service<F,tlab::type_list<Ts...>>{
+template <typename F,typename B,typename ... Ts> class service<F,B,tlab::type_list<Ts...>>{
 public:
     service(void){}
 
@@ -177,9 +196,9 @@ public:
 
     template <typename T>
     void log(const T& t){
-        std::ostringstream oss;
-        F::format(oss,t);
-        send(oss.str(),tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
+        buffer_.clear();
+        F::format(buffer_,t);
+        send(buffer_,tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
     }
 
     template <typename T, std::size_t ... S >
@@ -187,18 +206,57 @@ public:
         ((std::get<S>(outputs_).write(t,t)),...);
     }
 private:
+    using buffer_type = B;
+    buffer_type buffer_;
     std::tuple<Ts...> outputs_;
+};
+
+struct ostringstream_buffer{
+    std::ostringstream oss;
+    template <typename T> ostringstream_buffer &operator<<(T &&t) {
+        oss << t;
+        return *this;
+    }
+
+    void clear(void){
+        oss.str("");
+    }
+};
+
+template <typename T>
+T& operator<<(T& t,const ostringstream_buffer& buf){
+    t << buf.oss.str();
+    return t;
 };
 
 }}
 
+#ifndef TLOG_PP_INFO
+#define TLOG_PP_INFO tlab::log::pp_info{ __FILE__, __FUNCTION__, __LINE__ }
+#endif
+
+#ifndef TLOG
+#if defined(_WIN32) || defined(__WIN32__)
+#define TLOG(_logger,_lv,_tag,_msg,...)\
+do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, __VA_ARGS__ );} while(0)
+#else
+#define TLOG(_logger,_lv,_tag,_msg,...)\
+do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, ##__VA_ARGS__ );} while(0)
+#endif
+#endif
+
+
 TEST_CASE("log" , "simple"){
     using service_type = tlab::log::service<
-        tlab::log:: static_formatter<tlab::log::square_bracket_wrap<tag>>
+        tlab::log::static_formatter<
+            tlab::log::square_bracket_wrap<tag,message> , endl
+        >
+        ,tlab::log::ostringstream_buffer
         ,tlab::type_list<tlab::log::cout_output>>;
     service_type svc{};
     tlab::log::manager<tlab::type_list<service_type>>::instance().set_service<0>(svc);
-    tlab::log::manager<tlab::type_list<service_type>>::instance().log();
+
+    TLOG(tlab::log::manager<tlab::type_list<service_type>>::instance(),tlab::log::level::debug,"tag","%s msg" , "test");
 }
 /*
 namespace tlab{

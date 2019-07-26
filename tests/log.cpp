@@ -20,8 +20,7 @@
 namespace tlab::log{ 
 namespace expr{
 
-template<char C>
-struct char2type{};
+template<char C> struct char2type{};
 
 template<char ... Cs>
 using chars = tlab::type_list< char2type<Cs> ... >;
@@ -81,16 +80,20 @@ using square_bracket_wrap = wrap_each< char2type<'['>, char2type<']'>, Ts... >;
 struct timestamp{
     template < typename Stream , typename Context >
     static void write(Stream&& s, Context&& ){
-        std::time_t now = std::time(nullptr);
+        auto tp = std::chrono::system_clock::now();
+        std::time_t now = std::chrono::system_clock::to_time_t(tp);
         struct std::tm tm;
 #if defined(_WIN32) || defined(__WIN32__)
         localtime_s(&tm, &now);
 #else
         localtime_r(&now, &tm);
 #endif
-        char time_str[16] = {0,};
-        snprintf(time_str, 16, "%04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900,
-                 tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        char time_str[32] = {0,};
+        snprintf(time_str, 32, "%04d-%02d-%02d %02d:%02d:%02d.%06d", 
+                tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, 
+                tm.tm_hour, tm.tm_min, tm.tm_sec,
+                static_cast<int>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch()).count() % 1000000));
         s << time_str;
     }
 };
@@ -191,10 +194,8 @@ char level_code(const basic_context& ctx){
     return '?';
 }
 
-template < typename T > class manager;
-
 template <typename ... Ts>
-class manager<tlab::type_list<Ts...>>{
+class manager{
 public:
     static manager& instance(void){
         static manager m;
@@ -220,7 +221,6 @@ public:
     void send(T&& t, tlab::internal::index_sequence<S...>&&){
         ((std::get<S>(services_).log(t)),...);
     }
-
 private:
     std::tuple<Ts...> services_;
 private:
@@ -232,6 +232,7 @@ template <typename F,typename B,typename T> class service;
 
 template <typename F,typename B,typename ... Ts> class service<F,B,tlab::type_list<Ts...>>{
 public:
+    using buffer_type = B;
     service(void){}
 
     service(Ts&&... args)
@@ -244,9 +245,9 @@ public:
 
     template <typename T>
     void log(const T& t){
-        buffer_.clear();
-        F::format(buffer_,t);
-        send(buffer_,typename tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
+        buffer_type buff;
+        F::format(buff,t);
+        send(buff,typename tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
     }
 
     template <typename T, std::size_t ... S >
@@ -254,8 +255,6 @@ public:
         ((std::get<S>(outputs_).write(t)),...);
     }
 private:
-    using buffer_type = B;
-    buffer_type buffer_;
     std::tuple<Ts...> outputs_;
 };
 
@@ -265,10 +264,6 @@ struct ostringstream_buffer{
         oss << t;
         return *this;
     }
-
-    void clear(void){
-        oss.str("");
-    }
 };
 
 template <typename T>
@@ -276,6 +271,40 @@ T& operator<<(T& t,const ostringstream_buffer& buf){
     t << buf.oss.str();
     return t;
 };
+
+struct sprintf_buffer{
+    char data[1024] = {0,};
+    int len = 0;
+
+    sprintf_buffer &operator<<(const char c) {
+        len += std::snprintf(data+len,1024-len,"%c",c);
+        return *this;
+    }
+
+    sprintf_buffer &operator<<(const char* p) {
+        len += std::snprintf(data+len,1024-len,"%s",p);
+        return *this;
+    }
+
+    sprintf_buffer &operator<<(const std::string& str) {
+        len += std::snprintf(data+len,1024-len,"%s",str.c_str());
+        return *this;
+    }
+
+    sprintf_buffer &operator<<(int v) {
+        len += std::snprintf(data+len,1024-len,"%d",v);
+        return *this;
+    }
+};
+
+template <typename T>
+T& operator<<(T& t,const sprintf_buffer& buf){
+    t << buf.data;
+    return t;
+};
+
+
+
 
 struct cout_output {
     template < typename Buf>
@@ -456,19 +485,19 @@ using _loglvl = tlab::log::level;
 
 #ifndef TLAB_LOG
 #if defined(_WIN32) || defined(__WIN32__)
-#define TLOG_T(message, ...) TLOG(logger::instance(), _loglvl::trace, "", message, __VA_ARGS__)
-#define TLOG_D(message, ...) TLOG(logger::instance(), _loglvl::debug, "", message, __VA_ARGS__)
-#define TLOG_I(message, ...) TLOG(logger::instance(), _loglvl::info, "", message, __VA_ARGS__)
-#define TLOG_W(message, ...) TLOG(logger::instance(), _loglvl::warn, "", message, __VA_ARGS__)
-#define TLOG_E(message, ...) TLOG(logger::instance(), _loglvl::error, "", message, __VA_ARGS__)
-#define TLOG_F(message, ...) TLOG(logger::instance(), _loglvl::fatal, "", message, __VA_ARGS__)
+#define TLOG_T(_tag,_message, ...) TLOG(logger::instance(), _loglvl::trace, _tag,_message, __VA_ARGS__)
+#define TLOG_D(_tag,_message, ...) TLOG(logger::instance(), _loglvl::debug, _tag,_message, __VA_ARGS__)
+#define TLOG_I(_tag,_message, ...) TLOG(logger::instance(), _loglvl::info, _tag,_message, __VA_ARGS__)
+#define TLOG_W(_tag,_message, ...) TLOG(logger::instance(), _loglvl::warn, _tag,_message, __VA_ARGS__)
+#define TLOG_E(_tag,_message, ...) TLOG(logger::instance(), _loglvl::error, _tag,_message, __VA_ARGS__)
+#define TLOG_F(_tag,_message, ...) TLOG(logger::instance(), _loglvl::fatal, _tag,_message, __VA_ARGS__)
 #else
-#define TLOG_T(message, ...) TLOG(logger::instance(), _loglvl::trace, "", message, ##__VA_ARGS__)
-#define TLOG_D(message, ...) TLOG(logger::instance(), _loglvl::debug, "", message, ##__VA_ARGS__)
-#define TLOG_I(message, ...) TLOG(logger::instance(), _loglvl::info, "", message, ##__VA_ARGS__)
-#define TLOG_W(message, ...) TLOG(logger::instance(), _loglvl::warn, "", message, ##__VA_ARGS__)
-#define TLOG_E(message, ...) TLOG(logger::instance(), _loglvl::error, "", message, ##__VA_ARGS__)
-#define TLOG_F(message, ...) TLOG(logger::instance(), _loglvl::fatal, "", message, ##__VA_ARGS__)
+#define TLOG_T(_tag,_message, ...) TLOG(logger::instance(), _loglvl::trace, _tag,_message, ##__VA_ARGS__)
+#define TLOG_D(_tag,_message, ...) TLOG(logger::instance(), _loglvl::debug, _tag,_message, ##__VA_ARGS__)
+#define TLOG_I(_tag,_message, ...) TLOG(logger::instance(), _loglvl::info, _tag,_message, ##__VA_ARGS__)
+#define TLOG_W(_tag,_message, ...) TLOG(logger::instance(), _loglvl::warn, _tag,_message, ##__VA_ARGS__)
+#define TLOG_E(_tag,_message, ...) TLOG(logger::instance(), _loglvl::error, _tag,_message, ##__VA_ARGS__)
+#define TLOG_F(_tag,_message, ...) TLOG(logger::instance(), _loglvl::fatal, _tag,_message, ##__VA_ARGS__)
 #endif
 #endif
 
@@ -502,29 +531,39 @@ TEST_CASE("Log" , "Format"){
     ss.str("");
 }
 
-using service_type = tlab::log::service<
+using console_service_type = tlab::log::service<
         static_formatter<
-            //color::begin ,
+            color::begin ,
             square_bracket_wrap<
-                timestamp, expr::level, message,
+                timestamp, tag, expr::level, message,
                 exprs<file, chars<':'>, line>
             > , 
-            //color::end, 
+            color::end, 
             endl
         >
-        ,ostringstream_buffer
-        ,tlab::type_list<cout_output,file_output>>;
+        ,sprintf_buffer
+        ,tlab::type_list<cout_output>>;
 
-using logger = tlab::log::manager<tlab::type_list<service_type>>;
+
+using file_service_type = tlab::log::service<
+        static_formatter<
+            square_bracket_wrap<
+                timestamp, tag, expr::level, message,
+                exprs<file, chars<':'>, line>
+            > , 
+            endl
+        >
+        ,sprintf_buffer
+        ,tlab::type_list<file_output>>;
+
+using logger = tlab::log::manager<console_service_type,file_service_type>;
 
 TEST_CASE("log" , "simple"){
-    service_type svc{cout_output{} , file_output{ "./logs" }};
-    logger::instance().set_service<0>(std::move(svc));
-    TLOG_T("trace");
-    TLOG_D("debug");
-    TLOG_I("info");
-    TLOG_W("warn");
-    TLOG_E("error");
-    TLOG_F("fatal");
-    //TLOG(logger::instance(),tlab::log::level::debug,"tag","%s msg" , "test");
+    logger::instance().set_service<1>(file_service_type{file_output{ "./logs" }});
+    TLOG_T("tk","trace");
+    TLOG_D("tk","debug");
+    TLOG_I("tk","info");
+    TLOG_W("tk","warn");
+    TLOG_E("tk","error");
+    TLOG_F("tk","fatal");
 }

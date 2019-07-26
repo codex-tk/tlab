@@ -2,11 +2,23 @@
 #include <sstream>
 #include <iostream>
 #include <tlab/mp.hpp>
+#include <cstdarg>
+#include <mutex>
+#include <fstream>
+#include <iomanip>
+
+#if !defined(_WIN32) || defined(__WIN32__)
+#include <dirent.h>
+#include <errno.h>
+#include <pwd.h>
+#include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
 
 namespace tlab::log{ 
-struct context{
-    std::string tag;
-};
+namespace expr{
 
 template<char C>
 struct char2type{};
@@ -56,69 +68,87 @@ struct wrap_each{
     }
 };
 
+template <typename ... Ts> struct exprs{
+    template < typename Stream , typename Context >
+    static void write(Stream&& s, Context&& c){
+        (dispatch<Ts>::invoke(s,c), ...);
+    }
+};
+
 template <typename ... Ts >
 using square_bracket_wrap = wrap_each< char2type<'['>, char2type<']'>, Ts... >;
 
+struct timestamp{
+    template < typename Stream , typename Context >
+    static void write(Stream&& s, Context&& ){
+        std::time_t now = std::time(nullptr);
+        struct std::tm tm;
+#if defined(_WIN32) || defined(__WIN32__)
+        localtime_s(&tm, &now);
+#else
+        localtime_r(&now, &tm);
+#endif
+        char time_str[16] = {0,};
+        snprintf(time_str, 16, "%04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900,
+                 tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        s << time_str;
+    }
+};
+struct level {
+    template < typename Stream , typename Context >
+    static void write(Stream&& s, Context&& c){ s << level_code(c); }
+};
+
 struct tag {
     template < typename Stream , typename Context >
-    static void write(Stream&& s, Context&& c){
-        s << c.tag;
-    }
+    static void write(Stream&& s, Context&& c){ s << c.tag; }
 };
 
 struct endl {
     template < typename Stream , typename Context >
-    static void write(Stream&& s, Context&& ){
-        s << "\n";
-    }
+    static void write(Stream&& s, Context&& ){ s << "\n"; }
 };
 
 struct message{
     template < typename Stream , typename Context >
-    static void write(Stream&& s, Context&& c){
-        s << c.msg;
+    static void write(Stream&& s, Context&& c){ s << c.msg; }
+};
+
+struct file{
+    template < typename Stream , typename Context >
+    static void write(Stream&& s, Context&& c){ 
+        std::string path(c.file);
+        s << path.substr(path.find_last_of("/\\") + 1);
+        //s << c.file; 
     }
 };
 
+struct function{
+    template < typename Stream , typename Context >
+    static void write(Stream&& s, Context&& c){ s << c.function; }
+};
+
+struct line{
+    template < typename Stream , typename Context >
+    static void write(Stream&& s, Context&& c){ s << c.line; }
+};
+
+struct color{
+    struct begin {
+        template <typename Stream, typename Context>
+        static void write(Stream &&s, Context &&c) {
+            s << "\033[" << color_code(c) << "m";
+        }
+    };
+    struct end {
+        template <typename Stream, typename Context>
+        static void write(Stream &&s, Context &&) {
+            s << "\033[0m";
+        }
+    };
+};
+
 }
-
-using namespace tlab::log;
-
-TEST_CASE("Log" , "Concept"){
-    std::stringstream ss;
-
-    static_formatter<char2type<'['> , char2type<'t'> , char2type<'t'> , char2type<']'>>::format(ss,nullptr);
-    REQUIRE(ss.str() == "[tt]");
-    ss.str("");
-
-    static_formatter<chars<'[','t','t',']'>>::format(ss,nullptr);
-    REQUIRE(ss.str() == "[tt]");
-    ss.str("");
-
-    static_formatter< square_bracket_wrap<
-            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
-    REQUIRE(ss.str() == "[1][2][345]");
-    ss.str("");
-
-    static_formatter< wrap_each< chars<'[','{'> , chars<'}',']'> , 
-            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
-    REQUIRE(ss.str() == "[{1}][{2}][{345}]");
-    ss.str("");
-
-    static_formatter< square_bracket_wrap<
-            char2type<'1'>, tag , chars<'3','4','5'> >>::format(ss,context{"tag"});
-    REQUIRE(ss.str() == "[1][tag][345]");
-    ss.str("");
-}
-
-
-#include <tlab/mp.hpp>
-#include <cstdarg>
-#include <mutex>
-
-
-namespace tlab{
-namespace log{
 
 enum class level{ trace , debug , info ,  warn , error , fatal };
 
@@ -130,10 +160,36 @@ struct pp_info{
 
 struct basic_context{
     level level;
-    pp_info pp_info;
+    const char *file;
+    const char *function;
+    int line;
     const char *tag;
     const char *msg;
 };
+
+int color_code(const basic_context& ctx){
+    switch(ctx.level){
+    case level::trace: return 32;
+    case level::debug: return 33;
+    case level::info: return 36;
+    case level::warn: return 35;
+    case level::error: return 31;
+    case level::fatal: return 34;
+    }
+    return 0;
+}
+
+char level_code(const basic_context& ctx){
+    switch(ctx.level){
+    case level::trace: return 'T';
+    case level::debug: return 'D';
+    case level::info: return 'I';
+    case level::warn: return 'W';
+    case level::error: return 'E';
+    case level::fatal: return 'F';
+    }
+    return '?';
+}
 
 template < typename T > class manager;
 
@@ -145,8 +201,8 @@ public:
         return m;
     }
 
-    template <std::size_t I , typename T = typename tlab::at<I,tlab::type_list<Ts...>>::type >
-    void set_service(T&& t){
+    template <std::size_t I>
+    void set_service(typename tlab::at<I,tlab::type_list<Ts...>>::type&& t){
         std::get<I>(services_) = std::move(t);
     }
 
@@ -156,9 +212,8 @@ public:
         va_start(args, msg);
         vsnprintf(buff,4096,msg,args);
         va_end(args);
-        send( 
-            basic_context{ lv , std::forward<log::pp_info>(pp_info), tag , buff} ,
-            tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
+        send(basic_context{ lv , pp_info.file , pp_info.function , pp_info.line , tag , buff} ,
+            typename tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
     }
 
     template <typename T, std::size_t ... S >
@@ -171,13 +226,6 @@ private:
 private:
     manager(void){}
     ~manager(void){}
-};
-
-struct cout_output {
-    template < typename Buf , typename C >
-    void write(const Buf& b , const C& ){
-        std::cout << b;
-    }
 };
 
 template <typename F,typename B,typename T> class service;
@@ -198,12 +246,12 @@ public:
     void log(const T& t){
         buffer_.clear();
         F::format(buffer_,t);
-        send(buffer_,tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
+        send(buffer_,typename tlab::internal::make_index_sequence<sizeof...(Ts)>::type{});
     }
 
     template <typename T, std::size_t ... S >
     void send(T&& t, tlab::internal::index_sequence<S...>&&){
-        ((std::get<S>(outputs_).write(t,t)),...);
+        ((std::get<S>(outputs_).write(t)),...);
     }
 private:
     using buffer_type = B;
@@ -229,158 +277,166 @@ T& operator<<(T& t,const ostringstream_buffer& buf){
     return t;
 };
 
-}}
+struct cout_output {
+    template < typename Buf>
+    void write(const Buf& b){
+        std::cout << b;
+    }
+};
 
-#ifndef TLOG_PP_INFO
-#define TLOG_PP_INFO tlab::log::pp_info{ __FILE__, __FUNCTION__, __LINE__ }
-#endif
+class file_output{
+public:
+    file_output(void)
+        : path_("./"), max_lines_(0xffff), remain_days_(30),
+        lines_(0), file_seq_(0)
+    {}
 
-#ifndef TLOG
-#if defined(_WIN32) || defined(__WIN32__)
-#define TLOG(_logger,_lv,_tag,_msg,...)\
-do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, __VA_ARGS__ );} while(0)
-#else
-#define TLOG(_logger,_lv,_tag,_msg,...)\
-do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, ##__VA_ARGS__ );} while(0)
-#endif
-#endif
+    file_output(const std::string& path , 
+                const int remain_days = 30,
+                const int max_lines = 0xffff)
+        : path_(path), max_lines_(max_lines), remain_days_(remain_days),
+        lines_(0), file_seq_(0){
+         if (dir_exist(path_) == false) {
+            mkdir(path_);
+        };
+    }
 
+    template < typename Buf >
+    void write(const Buf& b ){
+        if (ofstream_.is_open() == false) {
+            std::ostringstream oss;
+            int64_t now_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+            std::time_t now = now_ms / 1000;
+            struct std::tm tm;
+    #if defined(_WIN32) || defined(__WIN32__)
+            localtime_s(&tm, &now);
+    #else
+            localtime_r(&now, &tm);
+    #endif
+            oss << path_ << '/' << std::setfill('0') << std::setw(4)
+                << tm.tm_year + 1900 << std::setw(2) << tm.tm_mon + 1
+                << std::setw(2) << tm.tm_mday << '_' << std::setw(2) << tm.tm_hour
+                << std::setw(2) << tm.tm_min << std::setw(2) << tm.tm_sec << '_'
+                << std::setw(4) << ++file_seq_;
+            ofstream_.open(oss.str());
+        }
 
-TEST_CASE("log" , "simple"){
-    using service_type = tlab::log::service<
-        tlab::log::static_formatter<
-            tlab::log::square_bracket_wrap<tag,message> , endl
-        >
-        ,tlab::log::ostringstream_buffer
-        ,tlab::type_list<tlab::log::cout_output>>;
-    service_type svc{};
-    tlab::log::manager<tlab::type_list<service_type>>::instance().set_service<0>(svc);
+        if (ofstream_.good()) {
+            ofstream_ << b;
+            ++lines_;
+        }
+        if (lines_ >= max_lines_) {
+            ofstream_.close();
+            lines_ = 0;
+            delete_old_logs();
+        }
+    }
 
-    TLOG(tlab::log::manager<tlab::type_list<service_type>>::instance(),tlab::log::level::debug,"tag","%s msg" , "test");
+    void delete_old_logs(void) {
+        std::time_t now;
+        struct std::tm tm;
+
+        std::time(&now);
+        now -= (60 * 60 * 24 * remain_days_);
+    #if defined(_WIN32) || defined(__WIN32__)
+        localtime_s(&tm, &now);
+    #else
+        localtime_r(&now, &tm);
+    #endif
+        std::ostringstream oss;
+        oss << std::setfill('0') << std::setw(4) << tm.tm_year + 1900
+            << std::setw(2) << tm.tm_mon + 1 << std::setw(2) << tm.tm_mday << '_'
+            << std::setw(2) << tm.tm_hour << std::setw(2) << tm.tm_min
+            << std::setw(2) << tm.tm_sec;
+        std::string base = oss.str();
+        const std::size_t base_len = base.length();
+        std::vector<std::string> files;
+        list_files(path_, files);
+        for (std::string &file : files) {
+            if (file.length() > base_len) {
+                if (file.substr(0, base_len) < base) {
+    #if defined(_WIN32) || defined(__WIN32__)
+                    std::string full_path = _path + '\\' + file;
+                    DeleteFileA(full_path.c_str());
+    #else
+                    std::string full_path = path_ + '/' + file;
+                    remove(full_path.c_str());
+    #endif
+                }
+            }
+        }
+    }
+private:
+    bool dir_exist(const std::string &path) {
+    #if defined(_WIN32) || defined(__WIN32__)
+        DWORD dwAttrib = GetFileAttributesA(path.c_str());
+
+        return (dwAttrib != INVALID_FILE_ATTRIBUTES &&
+                (dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+    #else
+        struct stat info;
+        if (stat(path.c_str(), &info) != 0)
+            return false;
+        else if (info.st_mode & S_IFDIR)
+            return true;
+        else
+            return false;
+    #endif
+    }
+
+    bool mkdir(const std::string &path) {
+    #if defined(_WIN32) || defined(__WIN32__)
+        LPSECURITY_ATTRIBUTES attr = nullptr;
+        return CreateDirectoryA(path.c_str(), attr) == TRUE;
+    #else
+        return ::mkdir(path.c_str(), 0755) == 0;
+    #endif
+    }
+
+    void list_files(const std::string &path, std::vector<std::string> &files) {
+    #if defined(_WIN32) || defined(__WIN32__)
+        WIN32_FIND_DATAA find_data;
+        HANDLE h = FindFirstFileA((path + "\\*.*").c_str(), &find_data);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                    files.emplace_back(find_data.cFileName);
+                }
+            } while (FindNextFileA(h, &find_data) == TRUE);
+            FindClose(h);
+        }
+    #else
+        struct stat statinfo;
+        DIR *dir = opendir(path.c_str());
+        if (dir == nullptr)
+            return;
+
+        char full_path[4096];
+        struct dirent *ent = nullptr;
+        while ((ent = readdir(dir)) != nullptr) {
+            sprintf(full_path, "%s/%s", path.c_str(), ent->d_name);
+            if (stat(full_path, &statinfo) == 0) {
+                if (!S_ISDIR(statinfo.st_mode)) {
+                    files.emplace_back(ent->d_name);
+                }
+            }
+        }
+        closedir(dir);
+    #endif
+    }
+private:
+    std::string path_;
+    int max_lines_;
+    int remain_days_;
+    std::ofstream ofstream_;
+    int lines_;
+    int file_seq_;
+};
+
 }
-/*
-namespace tlab{
-namespace log{
-
-enum class level{ trace , debug , info ,  warn , error , fatal };
-
-struct pp_info{
-    const char *file;
-    const char *function;
-    int line;
-};
-
-struct basic_context{
-    level level;
-    pp_info pp_info;
-    const char *tag;
-    const char *msg;
-};
-
-
-struct single_thread_model{
-    struct null_lock{};
-    template < typename T > struct null_lock_guard{
-        null_lock_guard(T&){}
-    };
-
-    using lock_type = null_lock;
-    template <typename T> 
-    using lock_guard = null_lock_guard<T>;
-};
-
-struct multi_thread_model{
-    using lock_type = std::mutex;
-    template <typename T>
-    using lock_guard = std::lock_guard<T>;
-};
-
-template <typename S , typename T = single_thread_model > class basic_logger;
-
-template <typename ThreadingModel , typename ... Services>
-class basic_logger<tlab::type_list<Services...>,ThreadingModel> {
-public:
-    using sequence_type = typename tlab::internal::make_index_sequence<sizeof...(Services)>::type;
-    using lock_type = typename ThreadingModel::lock_type;
-    using lock_guard = typename ThreadingModel::template lock_guard<lock_type>;
-
-    void log(level lv , pp_info&& pp_info, const char* tag, const char* msg, ...){
-        char buff[4096] = {0,};
-        va_list args;
-        va_start(args, msg);
-        vsnprintf(buff,4096,msg,args);
-        va_end(args);
-        basic_logger::lock_guard guard(lock_);
-        dispatch<sequence_type>::invoke(services_, 
-            basic_context{ lv , std::forward<log::pp_info>(pp_info), tag , buff});
-    }
-
-    template < typename T > struct dispatch;
-    
-    template < std::size_t ... S >
-    struct dispatch<tlab::internal::index_sequence<S...>> {
-        template < typename C >
-        static void invoke(std::tuple<Services...>& tuple , C&& c){
-            std::cout << c.pp_info.file << std::endl;
-            ((std::get<S>(tuple).log(c)),...);
-        }
-    };
-
-    template < std::size_t I> 
-    typename tlab::at<I,tlab::type_list<Services...>>::type& service(void) {
-        return std::get<I>(services_);
-    } 
-private:
-    lock_type lock_;
-    std::tuple<Services...> services_;
-};
-
-template < typename ... Services >
-using logger = basic_logger< tlab::type_list< Services...>>;
-
-template < typename StaticFormatter , typename Output >
-class basic_service;
-
-template < typename StaticFormatter , typename ... Outputs >
-class basic_service<StaticFormatter, tlab::type_list<Outputs...>> {
-public:
-    using sequence_type = typename tlab::internal::make_index_sequence<sizeof...(Outputs)>::type;
-    basic_service(void){}
-    ~basic_service(void){}
-
-    template < typename T > struct dispatch;
-    
-    template < std::size_t ... S >
-    struct dispatch<tlab::internal::index_sequence<S...>> {
-        template < typename T >
-        static void invoke(std::tuple<Outputs...>& tuple , T&& t){
-            ((std::get<S>(tuple).log(t)),...);
-        }
-    };
-
-    template < std::size_t I> 
-    typename tlab::at<I,tlab::type_list<Outputs...>>::type& output(void) {
-        return std::get<I>(outputs_);
-    }
-
-    template < typename C >
-    void log(const C& ){
-        std::stringstream ss;
-        //formatter_.format(ss,c);
-        dispatch<sequence_type>::invoke(outputs_,ss.str());
-    }
-private:
-    StaticFormatter formatter_;
-    std::tuple<Outputs...> outputs_;
-};
-
-class cout_output{
-public:
-    template < typename S > void log(S&& s){ std::cout << s; }
-};
-
-} // namespace log
-} // namespace tlab
 
 #ifndef TLOG_PP_INFO
 #define TLOG_PP_INFO tlab::log::pp_info{ __FILE__, __FUNCTION__, __LINE__ }
@@ -396,15 +452,79 @@ do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, ##__VA_ARGS__ );} while(0)
 #endif
 #endif
 
+using _loglvl = tlab::log::level;
+
+#ifndef TLAB_LOG
+#if defined(_WIN32) || defined(__WIN32__)
+#define TLOG_T(message, ...) TLOG(logger::instance(), _loglvl::trace, "", message, __VA_ARGS__)
+#define TLOG_D(message, ...) TLOG(logger::instance(), _loglvl::debug, "", message, __VA_ARGS__)
+#define TLOG_I(message, ...) TLOG(logger::instance(), _loglvl::info, "", message, __VA_ARGS__)
+#define TLOG_W(message, ...) TLOG(logger::instance(), _loglvl::warn, "", message, __VA_ARGS__)
+#define TLOG_E(message, ...) TLOG(logger::instance(), _loglvl::error, "", message, __VA_ARGS__)
+#define TLOG_F(message, ...) TLOG(logger::instance(), _loglvl::fatal, "", message, __VA_ARGS__)
+#else
+#define TLOG_T(message, ...) TLOG(logger::instance(), _loglvl::trace, "", message, ##__VA_ARGS__)
+#define TLOG_D(message, ...) TLOG(logger::instance(), _loglvl::debug, "", message, ##__VA_ARGS__)
+#define TLOG_I(message, ...) TLOG(logger::instance(), _loglvl::info, "", message, ##__VA_ARGS__)
+#define TLOG_W(message, ...) TLOG(logger::instance(), _loglvl::warn, "", message, ##__VA_ARGS__)
+#define TLOG_E(message, ...) TLOG(logger::instance(), _loglvl::error, "", message, ##__VA_ARGS__)
+#define TLOG_F(message, ...) TLOG(logger::instance(), _loglvl::fatal, "", message, ##__VA_ARGS__)
+#endif
+#endif
+
+using namespace tlab::log;
+using namespace tlab::log::expr;
+
+TEST_CASE("Log" , "Format"){
+    std::stringstream ss;
+
+    static_formatter<char2type<'['> , char2type<'t'> , char2type<'t'> , char2type<']'>>::format(ss,nullptr);
+    REQUIRE(ss.str() == "[tt]");
+    ss.str("");
+
+    static_formatter<chars<'[','t','t',']'>>::format(ss,nullptr);
+    REQUIRE(ss.str() == "[tt]");
+    ss.str("");
+
+    static_formatter< square_bracket_wrap<
+            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
+    REQUIRE(ss.str() == "[1][2][345]");
+    ss.str("");
+
+    static_formatter< wrap_each< chars<'[','{'> , chars<'}',']'> , 
+            char2type<'1'>, char2type<'2'>, chars<'3','4','5'> >>::format(ss,nullptr);
+    REQUIRE(ss.str() == "[{1}][{2}][{345}]");
+    ss.str("");
+    struct context { const char* tag; };
+    static_formatter< square_bracket_wrap<
+            char2type<'1'>, tag , chars<'3','4','5'> >>::format(ss,context{"tag"});
+    REQUIRE(ss.str() == "[1][tag][345]");
+    ss.str("");
+}
+
+using service_type = tlab::log::service<
+        static_formatter<
+            //color::begin ,
+            square_bracket_wrap<
+                timestamp, expr::level, message,
+                exprs<file, chars<':'>, line>
+            > , 
+            //color::end, 
+            endl
+        >
+        ,ostringstream_buffer
+        ,tlab::type_list<cout_output,file_output>>;
+
+using logger = tlab::log::manager<tlab::type_list<service_type>>;
 
 TEST_CASE("log" , "simple"){
-
-    using test_service = tlab::log::basic_service< int , tlab::type_list< tlab::log::cout_output > >;
-
-    tlab::log::logger< test_service > logger;
-
-    //logger.service<0>() = test_service{};
-
-    TLOG(logger,tlab::log::level::debug,"tag","%s msg" , "test");
-     
-}*/
+    service_type svc{cout_output{} , file_output{ "./logs" }};
+    logger::instance().set_service<0>(std::move(svc));
+    TLOG_T("trace");
+    TLOG_D("debug");
+    TLOG_I("info");
+    TLOG_W("warn");
+    TLOG_E("error");
+    TLOG_F("fatal");
+    //TLOG(logger::instance(),tlab::log::level::debug,"tag","%s msg" , "test");
+}

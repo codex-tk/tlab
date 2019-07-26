@@ -97,6 +97,7 @@ struct timestamp{
         s << time_str;
     }
 };
+
 struct level {
     template < typename Stream , typename Context >
     static void write(Stream&& s, Context&& c){ s << level_code(c); }
@@ -303,9 +304,6 @@ T& operator<<(T& t,const sprintf_buffer& buf){
     return t;
 };
 
-
-
-
 struct cout_output {
     template < typename Buf>
     void write(const Buf& b){
@@ -483,21 +481,25 @@ do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, ##__VA_ARGS__ );} while(0)
 
 using _loglvl = tlab::log::level;
 
+#ifndef DECL_LOGGER
+#define DECL_LOGGER( _class ) _class& logger_instance(void){ return _class::instance(); }
+#endif
+
 #ifndef TLAB_LOG
 #if defined(_WIN32) || defined(__WIN32__)
-#define TLOG_T(_tag,_message, ...) TLOG(logger::instance(), _loglvl::trace, _tag,_message, __VA_ARGS__)
-#define TLOG_D(_tag,_message, ...) TLOG(logger::instance(), _loglvl::debug, _tag,_message, __VA_ARGS__)
-#define TLOG_I(_tag,_message, ...) TLOG(logger::instance(), _loglvl::info, _tag,_message, __VA_ARGS__)
-#define TLOG_W(_tag,_message, ...) TLOG(logger::instance(), _loglvl::warn, _tag,_message, __VA_ARGS__)
-#define TLOG_E(_tag,_message, ...) TLOG(logger::instance(), _loglvl::error, _tag,_message, __VA_ARGS__)
-#define TLOG_F(_tag,_message, ...) TLOG(logger::instance(), _loglvl::fatal, _tag,_message, __VA_ARGS__)
+#define TLOG_T(_tag,_message, ...) TLOG(logger_instance(), _loglvl::trace, _tag,_message, __VA_ARGS__)
+#define TLOG_D(_tag,_message, ...) TLOG(logger_instance(), _loglvl::debug, _tag,_message, __VA_ARGS__)
+#define TLOG_I(_tag,_message, ...) TLOG(logger_instance(), _loglvl::info, _tag,_message, __VA_ARGS__)
+#define TLOG_W(_tag,_message, ...) TLOG(logger_instance(), _loglvl::warn, _tag,_message, __VA_ARGS__)
+#define TLOG_E(_tag,_message, ...) TLOG(logger_instance(), _loglvl::error, _tag,_message, __VA_ARGS__)
+#define TLOG_F(_tag,_message, ...) TLOG(logger_instance(), _loglvl::fatal, _tag,_message, __VA_ARGS__)
 #else
-#define TLOG_T(_tag,_message, ...) TLOG(logger::instance(), _loglvl::trace, _tag,_message, ##__VA_ARGS__)
-#define TLOG_D(_tag,_message, ...) TLOG(logger::instance(), _loglvl::debug, _tag,_message, ##__VA_ARGS__)
-#define TLOG_I(_tag,_message, ...) TLOG(logger::instance(), _loglvl::info, _tag,_message, ##__VA_ARGS__)
-#define TLOG_W(_tag,_message, ...) TLOG(logger::instance(), _loglvl::warn, _tag,_message, ##__VA_ARGS__)
-#define TLOG_E(_tag,_message, ...) TLOG(logger::instance(), _loglvl::error, _tag,_message, ##__VA_ARGS__)
-#define TLOG_F(_tag,_message, ...) TLOG(logger::instance(), _loglvl::fatal, _tag,_message, ##__VA_ARGS__)
+#define TLOG_T(_tag,_message, ...) TLOG(logger_instance(), _loglvl::trace, _tag,_message, ##__VA_ARGS__)
+#define TLOG_D(_tag,_message, ...) TLOG(logger_instance(), _loglvl::debug, _tag,_message, ##__VA_ARGS__)
+#define TLOG_I(_tag,_message, ...) TLOG(logger_instance(), _loglvl::info, _tag,_message, ##__VA_ARGS__)
+#define TLOG_W(_tag,_message, ...) TLOG(logger_instance(), _loglvl::warn, _tag,_message, ##__VA_ARGS__)
+#define TLOG_E(_tag,_message, ...) TLOG(logger_instance(), _loglvl::error, _tag,_message, ##__VA_ARGS__)
+#define TLOG_F(_tag,_message, ...) TLOG(logger_instance(), _loglvl::fatal, _tag,_message, ##__VA_ARGS__)
 #endif
 #endif
 
@@ -544,7 +546,6 @@ using console_service_type = tlab::log::service<
         ,sprintf_buffer
         ,tlab::type_list<cout_output>>;
 
-
 using file_service_type = tlab::log::service<
         static_formatter<
             square_bracket_wrap<
@@ -556,10 +557,12 @@ using file_service_type = tlab::log::service<
         ,sprintf_buffer
         ,tlab::type_list<file_output>>;
 
-using logger = tlab::log::manager<console_service_type,file_service_type>;
+using logger = tlab::log::manager<console_service_type/*,file_service_type */>;
+
+DECL_LOGGER(logger)
 
 TEST_CASE("log" , "simple"){
-    logger::instance().set_service<1>(file_service_type{file_output{ "./logs" }});
+    //logger::instance().set_service<1>(file_service_type{file_output{ "./logs" }});
     TLOG_T("tk","trace");
     TLOG_D("tk","debug");
     TLOG_I("tk","info");

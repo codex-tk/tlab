@@ -2,6 +2,12 @@
 
 #include <tlab/func.hpp>
 
+template <typename T>
+void sizeof_function(T&& t){
+    struct hold { T value; };
+    std::cout << sizeof(hold) << std::endl;
+}
+
 TEST_CASE("func"){
     SECTION("0"){
         std::cout << "SECTION 0" << std::endl;
@@ -11,6 +17,14 @@ TEST_CASE("func"){
     
     SECTION("1"){
         std::cout << "SECTION 1" << std::endl;
+        auto lambda = [] {
+            std::cout << "Lambda" << std::endl;
+        };
+        lambda();
+        sizeof_function([&](int i) -> int {
+            return i + 42;
+        });
+
         tlab::func<int ()> func([](void)->int {
             return 1;
         });

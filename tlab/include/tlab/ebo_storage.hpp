@@ -31,6 +31,12 @@ public:
         if constexpr(std::is_same_v<T,U>) return value_;
         else return *this;
     }
+
+    template<typename U>
+    const U& get(void) const noexcept { 
+        if constexpr(std::is_same_v<T,U>) return value_;
+        else return *this;
+    }
 private:
     T value_;
 };

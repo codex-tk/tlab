@@ -16,10 +16,10 @@
 
 namespace tlab{
 
-template <typename Signature,template <typename> class allocator = std::allocator> class func;
+template <typename Signature> class func;
 
-template <typename R , template <typename> class allocator , typename ... Ts > 
-class func<R (Ts...),allocator>{
+template <typename R, typename ... Ts > 
+class func<R (Ts...)>{
 private:
     struct callable_base{
         using invoke_type =  R (*)(callable_base* callable, Ts&& ...);

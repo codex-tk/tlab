@@ -14,6 +14,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#else
+#include <windows.h>
 #endif
 
 #include <tlab/threading_model.hpp>
@@ -390,7 +392,7 @@ public:
             if (file.length() > base_len) {
                 if (file.substr(0, base_len) < base) {
     #if defined(_WIN32) || defined(__WIN32__)
-                    std::string full_path = _path + '\\' + file;
+                    std::string full_path = path_ + '\\' + file;
                     DeleteFileA(full_path.c_str());
     #else
                     std::string full_path = path_ + '/' + file;

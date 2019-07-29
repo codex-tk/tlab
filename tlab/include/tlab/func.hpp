@@ -12,13 +12,14 @@
 #define __tlab_func_h__
 
 #include <iostream>
+#include <tlab/ebo_storage.hpp>
 
 namespace tlab{
 
-template <typename Signature> class func;
+template <typename Signature,template <typename> class allocator = std::allocator> class func;
 
-template <typename R , typename ... Ts > 
-class func<R (Ts...)>{
+template <typename R , template <typename> class allocator , typename ... Ts > 
+class func<R (Ts...),allocator>{
 private:
     struct callable_base{
         using invoke_type =  R (*)(callable_base* callable, Ts&& ...);
@@ -97,7 +98,6 @@ public:
         return *this;
     }
 
-
     template <typename T, typename = std::enable_if_t<
             !std::is_same_v<func,remove_cv_ref_t<T>>>>
     explicit func(T&& t)
@@ -134,7 +134,6 @@ public:
     explicit operator bool( void ) const {
         return callable_ != nullptr;
     }
-
 private:
     callable_base* callable_;
 };

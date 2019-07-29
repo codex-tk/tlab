@@ -23,7 +23,6 @@ namespace internal {
     };
 } // namespace internal
     
-
     struct single_threading_model{
         using lock_type = internal::no_lock;
     };

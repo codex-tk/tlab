@@ -486,24 +486,24 @@ do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, ##__VA_ARGS__ );} while(0)
 using _loglvl = tlab::log::level;
 
 #ifndef DEFINE_TLOGGER
-#define DEFINE_TLOGGER(_class) _class& logger_instance(void){ return _class::instance(); }
+#define DEFINE_TLOGGER(_class) _class& tlogger_instance(void){ return _class::instance(); }
 #endif
 
 #ifndef TLAB_LOG
 #if defined(_WIN32) || defined(__WIN32__)
-#define TLOG_T(_tag,_message, ...) TLOG(logger_instance(), _loglvl::trace, _tag,_message, __VA_ARGS__)
-#define TLOG_D(_tag,_message, ...) TLOG(logger_instance(), _loglvl::debug, _tag,_message, __VA_ARGS__)
-#define TLOG_I(_tag,_message, ...) TLOG(logger_instance(), _loglvl::info, _tag,_message, __VA_ARGS__)
-#define TLOG_W(_tag,_message, ...) TLOG(logger_instance(), _loglvl::warn, _tag,_message, __VA_ARGS__)
-#define TLOG_E(_tag,_message, ...) TLOG(logger_instance(), _loglvl::error, _tag,_message, __VA_ARGS__)
-#define TLOG_F(_tag,_message, ...) TLOG(logger_instance(), _loglvl::fatal, _tag,_message, __VA_ARGS__)
+#define TLOG_T(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::trace, _tag,_message, __VA_ARGS__)
+#define TLOG_D(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::debug, _tag,_message, __VA_ARGS__)
+#define TLOG_I(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::info, _tag,_message, __VA_ARGS__)
+#define TLOG_W(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::warn, _tag,_message, __VA_ARGS__)
+#define TLOG_E(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::error, _tag,_message, __VA_ARGS__)
+#define TLOG_F(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::fatal, _tag,_message, __VA_ARGS__)
 #else
-#define TLOG_T(_tag,_message, ...) TLOG(logger_instance(), _loglvl::trace, _tag,_message, ##__VA_ARGS__)
-#define TLOG_D(_tag,_message, ...) TLOG(logger_instance(), _loglvl::debug, _tag,_message, ##__VA_ARGS__)
-#define TLOG_I(_tag,_message, ...) TLOG(logger_instance(), _loglvl::info, _tag,_message, ##__VA_ARGS__)
-#define TLOG_W(_tag,_message, ...) TLOG(logger_instance(), _loglvl::warn, _tag,_message, ##__VA_ARGS__)
-#define TLOG_E(_tag,_message, ...) TLOG(logger_instance(), _loglvl::error, _tag,_message, ##__VA_ARGS__)
-#define TLOG_F(_tag,_message, ...) TLOG(logger_instance(), _loglvl::fatal, _tag,_message, ##__VA_ARGS__)
+#define TLOG_T(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::trace, _tag,_message, ##__VA_ARGS__)
+#define TLOG_D(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::debug, _tag,_message, ##__VA_ARGS__)
+#define TLOG_I(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::info, _tag,_message, ##__VA_ARGS__)
+#define TLOG_W(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::warn, _tag,_message, ##__VA_ARGS__)
+#define TLOG_E(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::error, _tag,_message, ##__VA_ARGS__)
+#define TLOG_F(_tag,_message, ...) TLOG(tlogger_instance(), _loglvl::fatal, _tag,_message, ##__VA_ARGS__)
 #endif
 #endif
 
@@ -561,15 +561,15 @@ using file_service_type = tlab::log::service<
         ,sprintf_buffer
         ,tlab::type_list<file_output>>;
 
-using logger = tlab::log::manager< 
-    tlab::multi_threading_model,
+using tlogger = tlab::log::manager< 
+    tlab::single_threading_model,
     tlab::type_list<console_service_type/*,file_service_type */>>;
 
-DEFINE_TLOGGER(logger)
+DEFINE_TLOGGER(tlogger)
 
 TEST_CASE("log" , "simple"){
     //logger::instance().set_service<1>(file_service_type{file_output{ "./logs" }});
-    TLOG_T("tk","trace");
+    TLOG_T("tk","한글");
     TLOG_D("tk","debug");
     TLOG_I("tk","info");
     TLOG_W("tk","warn");

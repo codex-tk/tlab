@@ -3,7 +3,6 @@
 #include <iostream>
 #include <tlab/mp.hpp>
 #include <cstdarg>
-#include <mutex>
 #include <fstream>
 #include <iomanip>
 
@@ -16,6 +15,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 #endif
+
+#include <tlab/threading_model.hpp>
 
 namespace tlab::log{ 
 namespace expr{
@@ -194,9 +195,11 @@ char level_code(const basic_context& ctx){
     }
     return '?';
 }
+template <typename U, typename T> class manager;
 
-template <typename ... Ts>
-class manager{
+template <typename ThreadingModel, typename ... Ts>
+class manager<ThreadingModel,tlab::type_list<Ts...>> 
+    : public ThreadingModel::lock_type {
 public:
     static manager& instance(void){
         static manager m;
@@ -220,6 +223,7 @@ public:
 
     template <typename T, std::size_t ... S >
     void send(T&& t, tlab::internal::index_sequence<S...>&&){
+        std::lock_guard<manager> guard(*this);
         ((std::get<S>(services_).log(t)),...);
     }
 private:
@@ -481,8 +485,8 @@ do { _logger.log(_lv, TLOG_PP_INFO, _tag, _msg, ##__VA_ARGS__ );} while(0)
 
 using _loglvl = tlab::log::level;
 
-#ifndef DECL_LOGGER
-#define DECL_LOGGER( _class ) _class& logger_instance(void){ return _class::instance(); }
+#ifndef DEFINE_TLOGGER
+#define DEFINE_TLOGGER(_class) _class& logger_instance(void){ return _class::instance(); }
 #endif
 
 #ifndef TLAB_LOG
@@ -557,9 +561,11 @@ using file_service_type = tlab::log::service<
         ,sprintf_buffer
         ,tlab::type_list<file_output>>;
 
-using logger = tlab::log::manager<console_service_type/*,file_service_type */>;
+using logger = tlab::log::manager< 
+    tlab::multi_threading_model,
+    tlab::type_list<console_service_type/*,file_service_type */>>;
 
-DECL_LOGGER(logger)
+DEFINE_TLOGGER(logger)
 
 TEST_CASE("log" , "simple"){
     //logger::instance().set_service<1>(file_service_type{file_output{ "./logs" }});

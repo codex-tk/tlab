@@ -2,10 +2,69 @@
 
 #include <tlab/func.hpp>
 
+namespace {
+
+void test_fn(void){
+  std::cout << "test_fn" << std::endl;
+}
+
+class test_member_func{
+public:
+  void test(void){
+    std::cout << "test_member_func::test" << value_ << std::endl;
+  }
+private:
+  int value_ = 10;
+};
+
+}
+
+TEST_CASE("func"){
+  tlab::func<void ()> fn = tlab::func<void ()>::make_func<test_fn>();
+  fn();
+  test_member_func tmf;
+  fn = tlab::func<void()>::make_func<test_member_func,&test_member_func::test>(&tmf);
+  fn();
+
+  // not allowed 
+  // fn = tlab::func<void()>::make_func(fn);
+
+  int v = 10;
+  fn = tlab::func<void()>::make_func([&]{
+    std::cout << "local func " << v << std::endl;
+  });
+  fn();
+  tlab::func<void ()> fn0 = tlab::func<void()>::make_func([]{
+    std::cout << "local func1" << std::endl;
+  });
+  fn0();
+  tlab::func<void()> cp(fn);
+  cp();
+
+}
+
+template<typename T>
+void init(void* ptr,T&& t){
+  new (ptr) T(std::forward<T>(t));
+}
+
+TEST_CASE("func_hold"){
+  auto test_fn = [] {
+    return 0;
+  };
+
+  std::intptr_t test = 0;
+  init(&test, [] {
+    return 0;
+  });
+  std::cout << test << std::endl;
+}
+/*
 template <typename T>
 void sizeof_function(T&& t){
     struct hold { T value; };
-    std::cout << sizeof(hold) << std::endl;
+    hold h{t};
+    std::cout << sizeof(h) << std::endl;
 }
 
 TEST_CASE("func"){
@@ -34,7 +93,7 @@ TEST_CASE("func"){
     };
 
     SECTION("2"){
-        std::cout << "SECTION 2" << std::endl;
+        std::cout << "SECTION 2 " << sizeof(std::shared_ptr<void>) << std::endl;
         tlab::func<int (int)> add_one([](int i)->int {
             return i+1;
         });
@@ -58,8 +117,8 @@ TEST_CASE("func"){
         REQUIRE_FALSE(func);
     }    
 }
-
-#pragma once
+ */
+//#pragma once
 #ifndef DELEGATE_HPP
 # define DELEGATE_HPP
 

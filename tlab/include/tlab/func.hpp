@@ -21,9 +21,9 @@ template <typename Signature> class func;
 template <typename R, typename ... Ts > 
 class func<R (Ts...)>{
 public:
-    enum class control_op { clone , destroy };
+    enum class control_op { clone , destroy , release , size };
     using invoke_func_type = R (*)(void* ptr, Ts&& ...);
-    using control_func_type = void (*)(control_op op,void*& p0,void* p1);
+    using control_func_type = std::size_t (*)(control_op op,void*& p0,void* p1);
 
     func(void* ptr,invoke_func_type i,control_func_type c)
         : ptr_(ptr),invoke_(i),control_(c)
@@ -33,6 +33,7 @@ public:
     ~func(void) noexcept {
         if(control_){
             control_(control_op::destroy,ptr_,nullptr);
+            control_(control_op::release,ptr_,nullptr);
         }
         ptr_ = nullptr;
         invoke_ = nullptr;
@@ -59,18 +60,31 @@ public:
         : ptr_(nullptr),invoke_(nullptr),control_(nullptr)
     {
         using handler_type = std::decay_t<T>;
-        if constexpr(sizeof(handler_type) <= sizeof(ptr_)){
+        std::size_t sz = sizeof(handler_type);
+        std::size_t sz0 = sizeof(ptr_);
+        std::cout << sizeof(handler_type) << std::endl;
+        if (sz <= sz0){
             new (&ptr_) handler_type(std::forward<T>(t));
-            invoke_ = invoke_handler_local<handler_type>;
-            control_ = control_local<handler_type>;
+            invoke_ = invoke_handler_static<handler_type>;
+            control_ = control_static<handler_type>;
         } else {
-            //todo
+            ptr_ = operator new(sizeof(handler<handler_type>));
+            new (ptr_) handler<handler_type>{ sizeof(handler_type) , std::forward<T>(t) };
+            invoke_ = invoke_handler_dynamic<handler_type>;
+            control_ = control_dynamic<handler_type>;
         }
     }
 
     func& operator=(const func& rhs){
-        func temp(rhs);
-        swap(temp);
+        if( control_ && control_(control_op::size,ptr_,nullptr) != 0 &&
+            rhs.control_ && rhs.control_(control_op::size,rhs.ptr_,nullptr) != 0)
+        {
+            if(ptr == rhs.ptr_ && invoke_ == rhs.invoke_ && control_ == rhs.control_ )
+                return *this;
+        } else {
+            func temp(rhs);
+            swap(temp);
+        }
         return *this;
     }
 
@@ -116,19 +130,56 @@ private:
     }
 
     template<typename T>
-    static R invoke_handler_local(void* ptr,Ts&&... args){
+    static R invoke_handler_static(void* ptr,Ts&&... args){
         return (*static_cast<T*>(reinterpret_cast<void*>(&ptr)))(std::forward<Ts>(args)...);
     }
 
     template<typename T>
-    static void control_local(control_op op,void*& p0,void* p1){
-        if(op == control_op::destroy){
+    static std::size_t control_static(control_op op,void*& p0,void* p1){
+        switch (op) {
+        case control_op::destroy:
             static_cast<T*>(reinterpret_cast<void*>(&p0))->~T();
-        } else {
+            break;
+        case control_op::clone:
             new (&p0) T(*static_cast<T*>(reinterpret_cast<void*>(&p1)));
+            break;
         }
+        return 0;
     }
 
+    template <typename T>
+    struct handler{
+        std::size_t size;
+        T impl;
+        R operator()(Ts&&... args){
+            return impl(std::forward<Ts>(args)...);
+        }
+    };
+
+    template<typename T>
+    static R invoke_handler_dynamic(void* ptr,Ts&&... args){
+        handler<T>* phandler = static_cast<handler<T>*>(ptr);
+        return (*phandler)(std::forward<Ts>(args)...);
+    }
+
+    template<typename T>
+    static std::size_t control_dynamic(control_op op,void*& p0,void* p1){
+        switch (op) {
+        case control_op::destroy:
+            static_cast<handler<T>*>(p0)->~handler<T>();
+            break;
+        case control_op::clone:
+            p0 = operator new(sizeof(handler<T>));
+            new (p0) handler<T>(*static_cast<handler<T>*>(p1));
+            break;
+        case control_op::size:
+            return static_cast<handler<T>*>(p0)->size;
+        case control_op::release:
+            operator delete(p0);
+            break;
+        }
+        return 0;
+    }
 private:
     void* ptr_;
     invoke_func_type invoke_;

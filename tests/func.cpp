@@ -10,7 +10,7 @@ void test_fn(void){
 
 class test_member_func{
 public:
-  void test(void){
+  void test(void) const {
     std::cout << "test_member_func::test" << value_ << std::endl;
   }
 private:
@@ -20,33 +20,43 @@ private:
 }
 
 TEST_CASE("func"){
-  tlab::func<void ()> fn = tlab::func<void ()>::make_func<test_fn>();
-  fn();
-  test_member_func tmf;
-  fn = tlab::func<void()>::make_func<test_member_func,&test_member_func::test>(&tmf);
-  fn();
-
-  // not allowed 
-  // fn = tlab::func<void()>::make_func(fn);
-
   int v = 10;
   int w = 11;
   int x = 12;
-  fn = tlab::func<void()>::make_func([v,w,x]{
-    std::cout << "local func " << v << w << x << std::endl;
-  });
-  fn();
-  tlab::func<void ()> fn0 = tlab::func<void()>::make_func([]{
-    std::cout << "local func1" << std::endl;
-  });
-  fn0();
-  tlab::func<void()> cp(fn);
-  cp();
 
-  tlab::func<void()> v0([v,w]{
-    std::cout << "local func " << v << w << std::endl;
-  });
+  SECTION("func_ptr and lambda"){
+    tlab::func<void ()> fn(test_fn);
+    fn();
+    // allocate buf
+    fn = [v,w,x]{ std::cout << "local func " << v << w << x << std::endl; };
+    fn();
+    // reuse buf
+    fn = test_fn;
+    fn();
+    // compile time binding
+    fn = tlab::func<void ()>::make_func<test_fn>();
+    fn();
 
+    fn = [v,w,x]{
+      std::cout << "local func 2" << v << w << x << std::endl;
+    };
+    fn();
+
+    tlab::func<void()> cp(fn);
+    cp();
+
+    // not allowed 
+    // fn = tlab::func<void()>::make_func(fn);
+  }
+
+  SECTION("member_func_ptr"){
+    test_member_func tmf;
+    tlab::func<void ()> fn = tlab::func<void()>::make_func<test_member_func,&test_member_func::test>(&tmf);
+    fn();
+
+    tlab::func<void ()> fn1(&tmf , &test_member_func::test);
+    fn1();
+  }
 }
 
 template<typename T>
@@ -55,17 +65,13 @@ void init(void* ptr,T&& t){
 }
 
 TEST_CASE("func_hold"){
-  auto test_fn = [] {
-    return 0;
-  };
-
   std::intptr_t test = 0;
   init(&test, [] {
     return 0;
   });
   std::cout << test << std::endl;
 }
-/*
+
 template <typename T>
 void sizeof_function(T&& t){
     struct hold { T value; };
@@ -73,13 +79,12 @@ void sizeof_function(T&& t){
     std::cout << sizeof(h) << std::endl;
 }
 
-TEST_CASE("func"){
+TEST_CASE("func1"){
     SECTION("0"){
         std::cout << "SECTION 0" << std::endl;
         tlab::func<void()> func;
         REQUIRE_FALSE(func);
     };
-    
     SECTION("1"){
         std::cout << "SECTION 1" << std::endl;
         auto lambda = [] {
@@ -123,7 +128,44 @@ TEST_CASE("func"){
         REQUIRE_FALSE(func);
     }    
 }
-//  */
+
+TEST_CASE("benchmark"){
+  int x{0};
+  long long stdfunc_millis = 0;
+  long long tlabfunc_millis = 0;
+  for(int xx = 0; xx < 5; ++xx)
+  {
+    {
+      std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
+      std::function<int(int)> t2 = [&x](int i){ return i + x; };
+      std::function<void(int)> t1 = [&x, &t2](int i){ x = t2(i); };
+      for(int i = 0; i < 100000; ++i){
+          t1 = [&x, &t2](int i){ x = t2(i); };
+          t1(i);
+      } 
+      std::chrono::system_clock::time_point end = std::chrono::system_clock::now();
+      stdfunc_millis += std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    }
+
+    {
+      std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
+      {
+          tlab::func<int(int)> t2 = [&x](int i){ return i + x; };
+          tlab::func<void(int)> t1 = [&x, &t2](int i){ x = t2(i); };
+          for(int i = 0; i < 100000; ++i) {
+            t1 = [&x, &t2](int i){ x = t2(i); };
+            t1(i);
+          } 
+      } 
+      std::chrono::system_clock::time_point end = std::chrono::system_clock::now();
+      tlabfunc_millis += std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    }
+  }
+  std::cout<< "std::func (" << (stdfunc_millis / 5) << ")" << std::endl;
+  std::cout<< "tlab::func (" << (tlabfunc_millis / 5) << ")" << std::endl;
+}
+
+// https://codereview.stackexchange.com/questions/14730/impossibly-fast-delegate-in-c11
 // //#pragma once
 // #ifndef DELEGATE_HPP
 // # define DELEGATE_HPP

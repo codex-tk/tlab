@@ -20,13 +20,104 @@ template <typename Signature> class func;
 
 template <typename R, typename ... Ts > 
 class func<R (Ts...)>{
+    struct alignas(sizeof(void*)) buf_hdr{
+        std::size_t size;
+        // todo shared?
+        // std::atomic<int> refs; or shared_ptr<void>?
+        static buf_hdr* from(void* ptr){
+            return static_cast<buf_hdr*>(ptr) - 1;
+        }
+
+        static void* data(buf_hdr* hdr){
+            return hdr + 1;
+        }
+
+        static void* create_buf(const std::size_t sz){
+            buf_hdr* p = static_cast<buf_hdr*>(operator new(sizeof(buf_hdr) + sz));
+            new (p) buf_hdr{sz};
+            return buf_hdr::data(p);
+        }
+
+        static void release_buf(void* ptr){
+            buf_hdr* p = buf_hdr::from(ptr);
+            operator delete(p);
+        }
+    };
+
+    template <typename C>
+    struct member_func_handler{
+        C* object_ptr;
+        R (C::*member_func_ptr)(Ts...);
+        
+        R operator()(Ts&& ... args) const {
+            return (object_ptr->*member_func_ptr)(std::forward<Ts>(args)...);
+        }
+    };
+
+    template <typename C>
+    struct const_member_func_handler{
+        const C* object_ptr;
+        R (C::*member_func_ptr)(Ts...) const;
+        R operator()(Ts&& ... args) const{
+            return (object_ptr->*member_func_ptr)(std::forward<Ts>(args)...);
+        }
+    };
 public:
-    enum class control_op { clone , destroy , release , size };
+    enum class control_op { clone, destroy, release, size };
     using invoke_func_type = R (*)(void* ptr, Ts&& ...);
     using control_func_type = std::size_t (*)(control_op op,void*& p0,void* p1);
 
-    func(void* ptr,invoke_func_type i,control_func_type c)
-        : ptr_(ptr),invoke_(i),control_(c)
+    func(void) : func(nullptr,nullptr,nullptr)
+    {
+    }
+
+    func(void* p,invoke_func_type i,control_func_type c)
+        : ptr_(p),invoke_(i),control_(c)
+    {
+    }
+    
+    explicit func(const func& rhs) 
+        : ptr_(nullptr),invoke_(rhs.invoke_),control_(rhs.control_)
+    {
+        if(control_){
+            control_(control_op::clone,ptr_,rhs.ptr_);
+        } else {
+            ptr_ = rhs.ptr_;
+        }
+    }
+
+    explicit func(func&& rhs) : func()
+    {
+        swap(rhs);
+    }
+
+    template <typename T,
+        typename = std::enable_if_t<!std::is_same_v<func,std::decay_t<T>>>>
+    func(T&& t)
+        : ptr_(nullptr),invoke_(nullptr),control_(nullptr)
+    {
+        using handler_type = std::decay_t<T>;
+        if constexpr(sizeof(handler_type) <= sizeof(void*)){
+            new (&ptr_) handler_type(std::forward<T>(t));
+            invoke_ = invoke_handler_static<handler_type>;
+            control_ = control_static<handler_type>;
+        } else {
+            ptr_ = buf_hdr::create_buf(sizeof(handler_type));
+            new (ptr_) handler_type(std::forward<T>(t));
+            invoke_ = invoke_handler_dynamic<handler_type>;
+            control_ = control_dynamic<handler_type>;
+        }
+    }
+
+    template <typename C>
+    func(C* c,R (C::*member_func_ptr)(Ts...))
+        : func(member_func_handler<C>{c,member_func_ptr})
+    {
+    }
+
+    template <typename C>
+    func(const C* c,R (C::*member_func_ptr)(Ts...) const)
+        : func(const_member_func_handler<C>{c,member_func_ptr})
     {
     }
 
@@ -40,47 +131,20 @@ public:
         control_ = nullptr;
     }
 
-    explicit func(const func& rhs) 
-        : ptr_(nullptr),invoke_(nullptr),control_(nullptr)
-    {
-        if(rhs.control_){
-            rhs.control_(control_op::clone,ptr_,rhs.ptr_);
-        } else {
-            ptr_ = rhs.ptr_;
-        }
-        invoke_ = rhs.invoke_;
-        control_ = rhs.control_;
-    }
-
-    explicit func(func&& rhs) = default;
-
-    template <typename T,
-        typename = std::enable_if_t<!std::is_same_v<func,std::decay_t<T>>>>
-    explicit func(T&& t)
-        : ptr_(nullptr),invoke_(nullptr),control_(nullptr)
-    {
-        using handler_type = std::decay_t<T>;
-        std::size_t sz = sizeof(handler_type);
-        std::size_t sz0 = sizeof(ptr_);
-        std::cout << sizeof(handler_type) << std::endl;
-        if (sz <= sz0){
-            new (&ptr_) handler_type(std::forward<T>(t));
-            invoke_ = invoke_handler_static<handler_type>;
-            control_ = control_static<handler_type>;
-        } else {
-            ptr_ = operator new(sizeof(handler<handler_type>));
-            new (ptr_) handler<handler_type>{ sizeof(handler_type) , std::forward<T>(t) };
-            invoke_ = invoke_handler_dynamic<handler_type>;
-            control_ = control_dynamic<handler_type>;
-        }
-    }
-
     func& operator=(const func& rhs){
-        if( control_ && control_(control_op::size,ptr_,nullptr) != 0 &&
-            rhs.control_ && rhs.control_(control_op::size,rhs.ptr_,nullptr) != 0)
-        {
-            if(ptr == rhs.ptr_ && invoke_ == rhs.invoke_ && control_ == rhs.control_ )
-                return *this;
+        if (*this == rhs)
+            return *this;
+
+        std::size_t bsz = control_ ? control_(control_op::size,ptr_,nullptr) : 0;
+        std::size_t rbsz = rhs.control_ ? rhs.control_(control_op::size,rhs.ptr_,nullptr) : 0;
+        if(bsz != 0 && rbsz != 0) {
+            control_(control_op::destroy,ptr_,nullptr);
+            if(bsz < rbsz){
+                control_(control_op::release,ptr_,nullptr);
+            }
+            rhs.control_(control_op::clone,ptr_,rhs.ptr_);
+            invoke_ = rhs.invoke_;
+            control_ = rhs.control_;
         } else {
             func temp(rhs);
             swap(temp);
@@ -93,7 +157,24 @@ public:
         return *this;
     }
 
-    R operator()(Ts&&... args){
+    template <typename T,
+        typename = std::enable_if_t<!std::is_same_v<func,std::decay_t<T>>>>
+    func& operator=(T&& t){
+        using handler_type = std::decay_t<T>;
+        std::size_t bsz = control_ ? control_(control_op::size,ptr_,nullptr) : 0;
+        if (bsz >= sizeof(handler_type)){
+            control_(control_op::destroy,ptr_,nullptr);
+            new (ptr_) handler_type(std::forward<handler_type>(t));
+            invoke_ = invoke_handler_dynamic<handler_type>;
+            control_ = control_dynamic<handler_type>;
+        } else {
+            func temp(std::forward<T>(t));
+            swap(temp);
+        }
+        return *this;
+    }
+
+    R operator()(Ts... args) const {
         return invoke_(ptr_,std::forward<Ts>(args)...);
     }
 
@@ -101,6 +182,19 @@ public:
         std::swap(ptr_,rhs.ptr_);
         std::swap(invoke_,rhs.invoke_);
         std::swap(control_,rhs.control_);
+    }
+
+    explicit operator bool() const { 
+        return invoke_ != nullptr; 
+    }
+
+    bool operator == (const func& rhs){
+        if( ptr_ == rhs.ptr_ && 
+            invoke_ == rhs.invoke_ && 
+            control_ == rhs.control_ ){
+            return true;
+        }
+        return false;
     }
 public:
     template <R (*func_ptr)(Ts...)>
@@ -112,6 +206,11 @@ public:
     static func make_func(C* c){
         return {c,invoke_member_func_ptr<C,member_func_ptr>,nullptr};
     }
+
+    template <typename C,R (C::*member_func_ptr)(Ts...) const>
+    static func make_func(const C* c){
+        return { const_cast<C*>(c),invoke_const_member_func_ptr<C,member_func_ptr>,nullptr};
+    }
     
     template <typename T, 
         typename = std::enable_if_t<!std::is_same_v<std::decay_t<T>,func>>>
@@ -119,22 +218,27 @@ public:
         return func(std::forward<T>(t));
     }
 private:
-    template<R (*func_ptr)(Ts...)>
+    template <R (*func_ptr)(Ts...)>
     static R invoke_func_ptr(void* ,Ts&&... args){
         return func_ptr(std::forward<Ts>(args)...);
     }
 
-    template<typename C,R (C::*member_func_ptr)(Ts...)>
+    template <typename C,R (C::*member_func_ptr)(Ts...)>
     static R invoke_member_func_ptr(void* ptr,Ts&&... args){
         return (static_cast<C*>(ptr)->*member_func_ptr)(std::forward<Ts>(args)...);
     }
 
-    template<typename T>
+    template <typename C,R (C::*member_func_ptr)(Ts...) const>
+    static R invoke_const_member_func_ptr(void* ptr,Ts&&... args){
+        return (static_cast<const C*>(ptr)->*member_func_ptr)(std::forward<Ts>(args)...);
+    }
+
+    template <typename T>
     static R invoke_handler_static(void* ptr,Ts&&... args){
         return (*static_cast<T*>(reinterpret_cast<void*>(&ptr)))(std::forward<Ts>(args)...);
     }
 
-    template<typename T>
+    template <typename T>
     static std::size_t control_static(control_op op,void*& p0,void* p1){
         switch (op) {
         case control_op::destroy:
@@ -143,39 +247,35 @@ private:
         case control_op::clone:
             new (&p0) T(*static_cast<T*>(reinterpret_cast<void*>(&p1)));
             break;
+        default:
+            break;
         }
         return 0;
     }
 
     template <typename T>
-    struct handler{
-        std::size_t size;
-        T impl;
-        R operator()(Ts&&... args){
-            return impl(std::forward<Ts>(args)...);
-        }
-    };
-
-    template<typename T>
     static R invoke_handler_dynamic(void* ptr,Ts&&... args){
-        handler<T>* phandler = static_cast<handler<T>*>(ptr);
-        return (*phandler)(std::forward<Ts>(args)...);
+        T* p = static_cast<T*>(ptr);
+        return (*p)(std::forward<Ts>(args)...);
     }
 
-    template<typename T>
+    template <typename T>
     static std::size_t control_dynamic(control_op op,void*& p0,void* p1){
         switch (op) {
         case control_op::destroy:
-            static_cast<handler<T>*>(p0)->~handler<T>();
+            static_cast<T*>(p0)->~T();
             break;
         case control_op::clone:
-            p0 = operator new(sizeof(handler<T>));
-            new (p0) handler<T>(*static_cast<handler<T>*>(p1));
+            if(p0 == nullptr) 
+                p0 = buf_hdr::create_buf(sizeof(T));
+            new (p0) T(std::forward<T>(*static_cast<T*>(p1)));
             break;
         case control_op::size:
-            return static_cast<handler<T>*>(p0)->size;
+            return buf_hdr::from(p0)->size;
         case control_op::release:
-            operator delete(p0);
+            if(p0 != nullptr) 
+                buf_hdr::release_buf(p0);
+            p0 = nullptr;
             break;
         }
         return 0;
@@ -186,127 +286,6 @@ private:
     control_func_type control_;
 };
 
-/* 
-template <typename R, typename ... Ts > 
-class func<R (Ts...)>{
-private:
-    struct callable_base{
-        using invoke_type =  R (*)(callable_base* callable, Ts&& ...);
-        using destroy_type = void (*)(callable_base* callable);
-        using clone_type = callable_base* (*)(const callable_base* callable);
-
-        invoke_type invoke;
-        destroy_type destroy;
-        clone_type clone;
-
-        callable_base(invoke_type i,destroy_type d,clone_type c)
-            : invoke(i), destroy(d), clone(c) {}
-    };
-
-    template <typename T>
-    class callable : public callable_base{
-    public:
-        explicit callable(const T& h) : 
-            callable_base(&callable::invoke_impl,
-                        &callable::destroy_impl,
-                        &callable::clone_impl), 
-            handler(h) {}
-
-        explicit callable(T&& h) :
-            callable_base(&callable::invoke_impl,
-                        &callable::destroy_impl,
-                        &callable::clone_impl), 
-            handler(std::move(h)) {}
-    private:
-        T handler;
-    private:
-        static R invoke_impl(callable_base* p, Ts&& ... args){
-            callable* pthis = static_cast<callable*>(p);
-            return pthis->handler( std::forward<Ts>(args)...);
-        }
-
-        static void destroy_impl(callable_base* p){
-            callable* pthis = static_cast<callable*>(p);
-            delete pthis;
-        }
-
-        static callable_base* clone_impl(const callable_base* p){
-            const callable* pthis = static_cast<const callable*>(p);
-            return new callable(pthis->handler);
-        }
-    };
-    template<typename T>
-    using remove_cv_ref_t = std::remove_cv_t<std::remove_reference_t<T>>;
-public:
-    func(void) : callable_(nullptr){}
-
-    explicit func(const func& rhs) 
-        : callable_(rhs.callable_ ?
-            rhs.callable_->clone(rhs.callable_) : nullptr)
-    {
-        std::cout << "explicit func(const func& rhs)" << std::endl;
-    }
-
-    explicit func(func&& rhs) 
-        : callable_(nullptr)
-    {
-        std::swap(callable_,rhs.callable_);
-        std::cout << "explicit func(func&& rhs) " << std::endl;
-    }
-
-    func& operator=(const func& rhs){
-        std::cout << "func& operator=(const func& rhs" << std::endl;
-        func swp(rhs);
-        std::swap(callable_,swp.callable_);
-        return *this;
-    }
-
-    func& operator=(func&& rhs) noexcept {
-        std::cout << "func& operator=(func&& rhs)" << std::endl;
-        std::swap(callable_,rhs.callable_);
-        return *this;
-    }
-
-    template <typename T, typename = std::enable_if_t<
-            !std::is_same_v<func,remove_cv_ref_t<T>>>>
-    explicit func(T&& t)
-        : callable_(new callable<remove_cv_ref_t<T>>(std::forward<T>(t))) 
-    {
-        std::cout << "explicit func(T&& t)" << std::endl;
-    }
-
-    template <typename T, typename = std::enable_if_t<
-            !std::is_same_v<func,remove_cv_ref_t<T>>>>
-    func& operator=(T&& t){
-        std::cout << "func& operator=(T&& t)" << std::endl;
-        func swp(std::forward<T>(t));
-        std::swap(callable_,swp.callable_);
-        return *this;
-    }
-
-    ~func(void){
-        destroy();
-    }
-
-    R operator()(Ts&&... args){
-        if(callable_)
-            return callable_->invoke(callable_,std::forward<Ts>(args)...);
-        return R();
-    }
-
-    void destroy(void) noexcept{
-        if(callable_)
-            callable_->destroy(callable_);
-        callable_ = nullptr;
-    }
-
-    explicit operator bool( void ) const {
-        return callable_ != nullptr;
-    }
-private:
-    callable_base* callable_;
-};
-*/
 } // namespace tlab
 
 
